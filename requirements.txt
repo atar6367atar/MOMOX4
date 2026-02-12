@@ -1,10 +1,4 @@
 pyTelegramBotAPI
 flask
-librosa
-soundfile
-numpy
-scipy
-numba
-llvmlite
 pydub
 ffmpeg-python
