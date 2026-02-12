@@ -5,7 +5,7 @@ import subprocess
 import librosa
 import numpy as np
 
-TOKEN = os.getenv("BOT_TOKEN")
+TOKEN = os.getenv("BOT_TOKEN")  # Render'da BOT_TOKEN environment variable olarak ekle
 bot = telebot.TeleBot(TOKEN)
 app = Flask(__name__)
 
@@ -25,8 +25,7 @@ def get_duration_ms(path):
         ["ffprobe", "-v", "error", "-show_entries",
          "format=duration", "-of",
          "default=noprint_wrappers=1:nokey=1", path],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE
     )
     try:
         seconds = float(result.stdout)
@@ -105,7 +104,6 @@ def handle_audio(message):
     with open(file_path, "wb") as f:
         f.write(downloaded)
 
-    # süre kontrolü
     if get_duration_ms(file_path) > MAX_DURATION_MS:
         bot.reply_to(message, "❌ Maksimum şarkı süresi 3 dakika!")
         return
@@ -115,7 +113,7 @@ def handle_audio(message):
     if len(user_sessions[user_id]) == 1:
         bot.reply_to(message, "🎼 Şimdi INSTRUMENTAL gönder (max 3dk).")
     elif len(user_sessions[user_id]) == 2:
-        bot.reply_to(message, "⚡ Hızlı ve uyumlu mix yapılıyor...")
+        bot.reply_to(message, "⚡ Mixleniyor, ritim ve ton uyumlu...")
         process_audio(user_id, message)
 
 # --------------------------
@@ -127,7 +125,7 @@ def process_audio(user_id, message):
         session_path = os.path.join(BASE_DIR, str(user_id))
         vocal_path, inst_path = user_sessions[user_id]
 
-        # BPM eşitle
+        # BPM eşitleme
         bpm_inst = detect_bpm(inst_path)
         bpm_voc = detect_bpm(vocal_path)
         rate = bpm_inst / bpm_voc if bpm_voc != 0 else 1.0
@@ -135,7 +133,7 @@ def process_audio(user_id, message):
         stretched_vocal = os.path.join(session_path, "vocal_stretched.wav")
         time_stretch_ffmpeg(vocal_path, rate, stretched_vocal)
 
-        # Key eşitle
+        # Key eşitleme
         key_inst = detect_key(inst_path)
         key_voc = detect_key(stretched_vocal)
         semitone_diff = key_inst - key_voc
@@ -170,5 +168,5 @@ def home():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     bot.remove_webhook()
-    bot.set_webhook(url=f"https://zordomusic.onrender.com/{TOKEN}")
+    bot.set_webhook(url=f"https://zordomix.onrender.com/{TOKEN}")
     app.run(host="0.0.0.0", port=port)
