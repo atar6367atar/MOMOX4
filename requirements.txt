@@ -1,4 +1,2 @@
 pyTelegramBotAPI
 flask
-pydub
-ffmpeg-python
