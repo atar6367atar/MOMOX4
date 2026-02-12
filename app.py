@@ -2,6 +2,8 @@ import os
 import telebot
 from flask import Flask, request
 import subprocess
+import librosa
+import numpy as np
 
 TOKEN = os.getenv("BOT_TOKEN")
 bot = telebot.TeleBot(TOKEN)
@@ -9,17 +11,16 @@ app = Flask(__name__)
 
 BASE_DIR = "sessions"
 os.makedirs(BASE_DIR, exist_ok=True)
-
 user_sessions = {}
+
 ALLOWED = [".mp3", ".wav", ".m4a", ".flac", ".ogg", ".aac"]
-MAX_DURATION_MS = 3 * 60 * 1000  # 3 dakika = 180.000 ms
+MAX_DURATION_MS = 3 * 60 * 1000  # 3 dakika
 
 # --------------------------
 # AUDIO FUNCTIONS
 # --------------------------
 
 def get_duration_ms(path):
-    # ffprobe ile süre ölçümü (ms cinsinden)
     result = subprocess.run(
         ["ffprobe", "-v", "error", "-show_entries",
          "format=duration", "-of",
@@ -32,6 +33,31 @@ def get_duration_ms(path):
         return int(seconds * 1000)
     except:
         return 0
+
+def detect_bpm(path):
+    y, sr = librosa.load(path, mono=True)
+    tempo, _ = librosa.beat.beat_track(y=y, sr=sr)
+    return tempo
+
+def detect_key(path):
+    y, sr = librosa.load(path)
+    chroma = librosa.feature.chroma_cqt(y=y, sr=sr)
+    return int(np.argmax(np.mean(chroma, axis=1)))
+
+def time_stretch_ffmpeg(input_path, rate, output_path):
+    subprocess.run([
+        "ffmpeg", "-y", "-i", input_path,
+        "-filter:a", f"atempo={rate}",
+        output_path
+    ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+def pitch_shift_ffmpeg(input_path, semitones, output_path):
+    factor = 2 ** (semitones / 12)
+    subprocess.run([
+        "ffmpeg", "-y", "-i", input_path,
+        "-filter:a", f"asetrate=44100*{factor},aresample=44100",
+        output_path
+    ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 def fast_mix_ffmpeg(vocal_path, instrumental_path, output_path):
     cmd = [
@@ -79,7 +105,7 @@ def handle_audio(message):
     with open(file_path, "wb") as f:
         f.write(downloaded)
 
-    # Süre kontrolü
+    # süre kontrolü
     if get_duration_ms(file_path) > MAX_DURATION_MS:
         bot.reply_to(message, "❌ Maksimum şarkı süresi 3 dakika!")
         return
@@ -89,7 +115,7 @@ def handle_audio(message):
     if len(user_sessions[user_id]) == 1:
         bot.reply_to(message, "🎼 Şimdi INSTRUMENTAL gönder (max 3dk).")
     elif len(user_sessions[user_id]) == 2:
-        bot.reply_to(message, "⚡ Hızlı mix yapılıyor...")
+        bot.reply_to(message, "⚡ Hızlı ve uyumlu mix yapılıyor...")
         process_audio(user_id, message)
 
 # --------------------------
@@ -100,9 +126,27 @@ def process_audio(user_id, message):
     try:
         session_path = os.path.join(BASE_DIR, str(user_id))
         vocal_path, inst_path = user_sessions[user_id]
-        output_path = os.path.join(session_path, "final_mix.mp3")
 
-        fast_mix_ffmpeg(vocal_path, inst_path, output_path)
+        # BPM eşitle
+        bpm_inst = detect_bpm(inst_path)
+        bpm_voc = detect_bpm(vocal_path)
+        rate = bpm_inst / bpm_voc if bpm_voc != 0 else 1.0
+
+        stretched_vocal = os.path.join(session_path, "vocal_stretched.wav")
+        time_stretch_ffmpeg(vocal_path, rate, stretched_vocal)
+
+        # Key eşitle
+        key_inst = detect_key(inst_path)
+        key_voc = detect_key(stretched_vocal)
+        semitone_diff = key_inst - key_voc
+
+        pitched_vocal = os.path.join(session_path, "vocal_pitched.wav")
+        pitch_shift_ffmpeg(stretched_vocal, semitone_diff, pitched_vocal)
+
+        # Fast mix
+        output_path = os.path.join(session_path, "final_mix.mp3")
+        fast_mix_ffmpeg(pitched_vocal, inst_path, output_path)
+
         bot.send_audio(message.chat.id, open(output_path, "rb"))
 
     finally:
