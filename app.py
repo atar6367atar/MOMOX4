@@ -175,5 +175,5 @@ def home():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     bot.remove_webhook()
-    bot.set_webhook(url=f"https://YOUR_RENDER_URL.onrender.com/{TOKEN}")
+    bot.set_webhook(url=f"https://zordomusic.onrender.com/{TOKEN}")
     app.run(host="0.0.0.0", port=port)
