@@ -1,7 +1,6 @@
 import os
 import telebot
 from flask import Flask, request
-from pydub import AudioSegment
 import subprocess
 
 TOKEN = os.getenv("BOT_TOKEN")
@@ -10,8 +9,8 @@ app = Flask(__name__)
 
 BASE_DIR = "sessions"
 os.makedirs(BASE_DIR, exist_ok=True)
-user_sessions = {}
 
+user_sessions = {}
 ALLOWED = [".mp3", ".wav", ".m4a", ".flac", ".ogg", ".aac"]
 MAX_DURATION_MS = 3 * 60 * 1000  # 3 dakika = 180.000 ms
 
@@ -19,9 +18,20 @@ MAX_DURATION_MS = 3 * 60 * 1000  # 3 dakika = 180.000 ms
 # AUDIO FUNCTIONS
 # --------------------------
 
-def check_duration(path):
-    audio = AudioSegment.from_file(path)
-    return len(audio) <= MAX_DURATION_MS
+def get_duration_ms(path):
+    # ffprobe ile süre ölçümü (ms cinsinden)
+    result = subprocess.run(
+        ["ffprobe", "-v", "error", "-show_entries",
+         "format=duration", "-of",
+         "default=noprint_wrappers=1:nokey=1", path],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE
+    )
+    try:
+        seconds = float(result.stdout)
+        return int(seconds * 1000)
+    except:
+        return 0
 
 def fast_mix_ffmpeg(vocal_path, instrumental_path, output_path):
     cmd = [
@@ -69,7 +79,8 @@ def handle_audio(message):
     with open(file_path, "wb") as f:
         f.write(downloaded)
 
-    if not check_duration(file_path):
+    # Süre kontrolü
+    if get_duration_ms(file_path) > MAX_DURATION_MS:
         bot.reply_to(message, "❌ Maksimum şarkı süresi 3 dakika!")
         return
 
@@ -92,7 +103,6 @@ def process_audio(user_id, message):
         output_path = os.path.join(session_path, "final_mix.mp3")
 
         fast_mix_ffmpeg(vocal_path, inst_path, output_path)
-
         bot.send_audio(message.chat.id, open(output_path, "rb"))
 
     finally:
