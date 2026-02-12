@@ -10,37 +10,29 @@ app = Flask(__name__)
 
 BASE_DIR = "sessions"
 os.makedirs(BASE_DIR, exist_ok=True)
-
 user_sessions = {}
+
 ALLOWED = [".mp3", ".wav", ".m4a", ".flac", ".ogg", ".aac"]
+MAX_DURATION_MS = 3 * 60 * 1000  # 3 dakika = 180.000 ms
 
 # --------------------------
 # AUDIO FUNCTIONS
 # --------------------------
 
-def convert_to_wav(input_path, output_path):
-    subprocess.run([
-        "ffmpeg", "-y", "-i", input_path,
-        "-ar", "44100",
-        "-ac", "2",
+def check_duration(path):
+    audio = AudioSegment.from_file(path)
+    return len(audio) <= MAX_DURATION_MS
+
+def fast_mix_ffmpeg(vocal_path, instrumental_path, output_path):
+    cmd = [
+        "ffmpeg", "-y",
+        "-i", instrumental_path,
+        "-i", vocal_path,
+        "-filter_complex",
+        "[1:a]volume=0.8[a1];[0:a][a1]amix=inputs=2:duration=longest",
         output_path
-    ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-
-def fast_mix(vocal_path, instrumental_path, output_path):
-    vocal = AudioSegment.from_file(vocal_path)
-    instrumental = AudioSegment.from_file(instrumental_path)
-
-    # Basit gain dengeleme
-    vocal = vocal - 3
-    instrumental = instrumental - 1
-
-    # Uzunluk eşitleme
-    min_len = min(len(vocal), len(instrumental))
-    vocal = vocal[:min_len]
-    instrumental = instrumental[:min_len]
-
-    final = instrumental.overlay(vocal)
-    final.export(output_path, format="mp3")
+    ]
+    subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 # --------------------------
 # TELEGRAM HANDLERS
@@ -49,7 +41,7 @@ def fast_mix(vocal_path, instrumental_path, output_path):
 @bot.message_handler(commands=['start'])
 def start(message):
     user_sessions[message.from_user.id] = []
-    bot.reply_to(message, "🎤 Önce VOCAL gönder.")
+    bot.reply_to(message, "🎤 Önce VOCAL gönder (max 3dk).")
 
 @bot.message_handler(content_types=['audio', 'document'])
 def handle_audio(message):
@@ -71,19 +63,22 @@ def handle_audio(message):
 
     file_info = bot.get_file(file_id)
     downloaded = bot.download_file(file_info.file_path)
-
     count = len(user_sessions.get(user_id, []))
     file_path = os.path.join(session_path, f"input_{count}{ext}")
 
     with open(file_path, "wb") as f:
         f.write(downloaded)
 
+    if not check_duration(file_path):
+        bot.reply_to(message, "❌ Maksimum şarkı süresi 3 dakika!")
+        return
+
     user_sessions.setdefault(user_id, []).append(file_path)
 
     if len(user_sessions[user_id]) == 1:
-        bot.reply_to(message, "🎼 Şimdi INSTRUMENTAL gönder.")
+        bot.reply_to(message, "🎼 Şimdi INSTRUMENTAL gönder (max 3dk).")
     elif len(user_sessions[user_id]) == 2:
-        bot.reply_to(message, "⚡ Mix yapılıyor...")
+        bot.reply_to(message, "⚡ Hızlı mix yapılıyor...")
         process_audio(user_id, message)
 
 # --------------------------
@@ -93,16 +88,10 @@ def handle_audio(message):
 def process_audio(user_id, message):
     try:
         session_path = os.path.join(BASE_DIR, str(user_id))
-        vocal_raw, instrumental_raw = user_sessions[user_id]
-
-        vocal_wav = os.path.join(session_path, "vocal.wav")
-        inst_wav = os.path.join(session_path, "inst.wav")
-
-        convert_to_wav(vocal_raw, vocal_wav)
-        convert_to_wav(instrumental_raw, inst_wav)
-
+        vocal_path, inst_path = user_sessions[user_id]
         output_path = os.path.join(session_path, "final_mix.mp3")
-        fast_mix(vocal_wav, inst_wav, output_path)
+
+        fast_mix_ffmpeg(vocal_path, inst_path, output_path)
 
         bot.send_audio(message.chat.id, open(output_path, "rb"))
 
@@ -127,5 +116,5 @@ def home():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     bot.remove_webhook()
-    bot.set_webhook(url=f"https://YOUR_RENDER_URL.onrender.com/{TOKEN}")
+    bot.set_webhook(url=f"https://zordomusic.onrender.com/{TOKEN}")
     app.run(host="0.0.0.0", port=port)
